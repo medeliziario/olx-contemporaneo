@@ -1,0 +1,837 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OLX Contemporâneo - Classificados do Condomínio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Nunito', 'sans-serif'] },
+                    colors: {
+                        olx: {
+                            purple: '#6e0ad6',
+                            purpleHover: '#5a08b3',
+                            orange: '#f28000',
+                            gray: '#4a4a4a',
+                            bg: '#f6f6f6'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #f6f6f6; overflow-x: hidden; font-family: 'Nunito', sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+        input[type="number"]::-webkit-inner-spin-button { display: none; }
+        .view-transition { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Custom UI fixes for OLX look */
+        .category-card:hover { border-color: #6e0ad6; color: #6e0ad6; }
+        .btn-shadow { box-shadow: 0 4px 14px 0 rgba(110, 10, 214, 0.39); }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.13.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.563.0"
+  }
+}
+</script>
+</head>
+<body class="text-gray-900">
+    <!-- O ID mudou para 'root' para evitar o erro do index.tsx -->
+    <div id="root"></div>
+
+    <script>
+        // --- CONFIGURAÇÕES ---
+        const ADMIN_EMAIL = 'lluizpaulos@gmail.com';
+        const ADMIN_WHATSAPP = '5521968223436';
+        const SUBSCRIPTION_FEE = 10;
+        const PIX_KEY = 'luiz-paulo-eliziario-da@jim.com';
+        const CATEGORIES = ['Saúde e Beleza', 'Venda', 'Troca', 'Pet', 'Automóveis', 'Móveis', 'Eletrônicos', 'Esportes', 'Brinquedos', 'Serviços', 'Imóveis', 'Outros'];
+
+        // --- BANCO DE DADOS (LOCALSTORAGE) ---
+        const USERS_KEY = 'olx_contemporaneo_users_v5';
+        const LISTINGS_KEY = 'olx_contemporaneo_listings_v5';
+        const SESSION_KEY = 'olx_contemporaneo_session_v5';
+
+        const db = {
+            getUsers: () => JSON.parse(localStorage.getItem(USERS_KEY) || '[]'),
+            saveUsers: (users) => localStorage.setItem(USERS_KEY, JSON.stringify(users)),
+            getListings: () => JSON.parse(localStorage.getItem(LISTINGS_KEY) || '[]'),
+            saveListings: (listings) => localStorage.setItem(LISTINGS_KEY, JSON.stringify(listings)),
+            getSession: () => localStorage.getItem(SESSION_KEY),
+            setSession: (id) => id ? localStorage.setItem(SESSION_KEY, id) : localStorage.removeItem(SESSION_KEY),
+            init: () => {
+                const users = db.getUsers();
+                if (!users.find(u => u.email === ADMIN_EMAIL)) {
+                    users.push({
+                        id: 'admin-1',
+                        name: 'Luiz Paulo (Admin)',
+                        email: ADMIN_EMAIL,
+                        password: 'luiz123',
+                        whatsapp: ADMIN_WHATSAPP,
+                        block: 'ADMIN',
+                        apartment: 'ADMIN',
+                        role: 'admin',
+                        residentStatus: 'approved',
+                        subscriberActive: true,
+                        createdAt: new Date().toISOString()
+                    });
+                    db.saveUsers(users);
+                }
+            }
+        };
+
+        // --- ESTADO GLOBAL ---
+        let state = {
+            user: null,
+            currentView: 'home', // home, login, register, status, announce, myListings, admin, detail
+            viewParams: null,
+            selectedCategory: 'Todas',
+            searchQuery: ''
+        };
+
+        // --- ROTEAMENTO ---
+        function navigateTo(view, params = null) {
+            state.currentView = view;
+            state.viewParams = params;
+            render();
+            window.scrollTo(0, 0);
+        }
+
+        function checkAuth() {
+            const userId = db.getSession();
+            if (userId) {
+                const users = db.getUsers();
+                state.user = users.find(u => u.id === userId);
+            } else {
+                state.user = null;
+            }
+        }
+
+        // --- FORMATAÇÃO ---
+        function formatCurrency(val) {
+            return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        // --- RENDERIZAÇÃO ---
+        function render() {
+            checkAuth();
+            const root = document.getElementById('root');
+            
+            // Layout Principal
+            root.innerHTML = `
+                ${renderHeader()}
+                <main id="main-content" class="min-h-screen pb-20 view-transition bg-[#f6f6f6]">
+                    ${renderCurrentView()}
+                </main>
+                ${renderFooter()}
+            `;
+            
+            // Inicializar ícones do Lucide
+            if (window.lucide) {
+                lucide.createIcons();
+            }
+        }
+
+        function renderHeader() {
+            return `
+            <header class="bg-olx-purple sticky top-0 z-50 shadow-md">
+                <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
+                    <div onclick="navigateTo('home')" class="cursor-pointer flex items-center gap-1 shrink-0">
+                        <span class="text-3xl font-black text-white tracking-tighter">OLX</span>
+                        <span class="text-[10px] font-bold text-purple-200 self-end mb-1.5 hidden sm:block uppercase tracking-widest">Contemporâneo</span>
+                    </div>
+
+                    <div class="flex-1 max-w-xl hidden md:flex items-center bg-white rounded-lg h-10 shadow-sm px-3">
+                        <i data-lucide="search" class="w-4 h-4 text-gray-400 mr-2"></i>
+                        <input type="text" 
+                            placeholder="Buscar no condomínio..." 
+                            class="w-full outline-none text-sm text-gray-700"
+                            onkeyup="handleSearch(this.value)"
+                            value="${state.searchQuery}">
+                    </div>
+
+                    <div class="flex items-center gap-4">
+                        ${state.user ? `
+                            <div class="flex items-center gap-4 text-white">
+                                <button onclick="navigateTo('myListings')" class="hidden sm:block hover:opacity-80 transition-opacity">
+                                    <i data-lucide="message-square" class="w-6 h-6"></i>
+                                </button>
+                                <div class="relative group">
+                                    <button class="flex items-center gap-1 font-bold focus:outline-none">
+                                        <div class="w-9 h-9 bg-white/20 rounded-full border border-white/30 flex items-center justify-center text-xs shadow-inner">
+                                            ${state.user.name[0]}
+                                        </div>
+                                    </button>
+                                    <div class="absolute right-0 mt-2 w-52 bg-white text-gray-800 rounded-2xl shadow-2xl py-2 invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all z-50 border border-gray-100">
+                                        <div class="px-4 py-3 border-b border-gray-50 mb-1">
+                                            <p class="text-xs font-black text-gray-400 uppercase tracking-widest">Morador</p>
+                                            <p class="font-bold text-sm truncate">${state.user.name}</p>
+                                        </div>
+                                        ${state.user.role === 'admin' ? `<button onclick="navigateTo('admin')" class="w-full text-left px-4 py-2.5 hover:bg-purple-50 text-olx-purple font-black text-xs uppercase">Painel Admin</button>` : ''}
+                                        <button onclick="navigateTo('myListings')" class="w-full text-left px-4 py-2.5 hover:bg-gray-50 text-xs font-bold uppercase">Meus anúncios</button>
+                                        <button onclick="logout()" class="w-full text-left px-4 py-2.5 hover:bg-red-50 text-red-600 text-xs font-bold border-t border-gray-50 uppercase mt-1">Sair da conta</button>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : `
+                            <button onclick="navigateTo('login')" class="text-white text-sm font-black uppercase hover:underline">Entrar</button>
+                        `}
+                        <button onclick="handleAnnounceClick()" class="bg-olx-orange hover:bg-olx-orange/90 text-white px-6 py-2.5 rounded-full font-black uppercase text-[10px] shadow-lg transition-all active:scale-95 btn-shadow">Anunciar</button>
+                    </div>
+                </div>
+            </header>
+            `;
+        }
+
+        function renderFooter() {
+            return `
+            <footer class="bg-white border-t border-gray-200 py-12 px-4">
+                <div class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+                    <div class="flex items-center gap-2">
+                        <span class="text-2xl font-black text-olx-purple tracking-tighter">OLX</span>
+                        <span class="text-xs font-bold text-gray-400 uppercase tracking-widest">Contemporâneo</span>
+                    </div>
+                    <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest text-center">
+                        Marketplace exclusivo para moradores do Condomínio Contemporâneo. Proibido para externos.
+                    </p>
+                    <div class="flex gap-4">
+                        <button onclick="navigateTo('home')" class="text-[10px] font-black uppercase text-gray-400 hover:text-olx-purple">Ajuda</button>
+                        <button onclick="navigateTo('home')" class="text-[10px] font-black uppercase text-gray-400 hover:text-olx-purple">Termos</button>
+                    </div>
+                </div>
+            </footer>
+            `;
+        }
+
+        function renderCurrentView() {
+            const user = state.user;
+            
+            // Segurança de Bloqueio
+            if (user && user.residentStatus === 'blocked') return renderBlocked();
+            if (user && user.residentStatus === 'pending' && user.role !== 'admin' && state.currentView !== 'status') {
+                return renderStatusPage();
+            }
+
+            switch(state.currentView) {
+                case 'home': return renderHome();
+                case 'login': return renderLogin();
+                case 'register': return renderRegister();
+                case 'status': return renderStatusPage();
+                case 'announce': return renderAnnounce();
+                case 'myListings': return renderMyListings();
+                case 'admin': return renderAdmin();
+                case 'detail': return renderDetail(state.viewParams);
+                default: return renderHome();
+            }
+        }
+
+        // --- PÁGINAS ---
+
+        function renderHome() {
+            const listings = db.getListings().filter(l => l.status === 'approved');
+            let filtered = state.selectedCategory === 'Todas' ? listings : listings.filter(l => l.category === state.selectedCategory);
+            
+            if (state.searchQuery) {
+                filtered = filtered.filter(l => l.title.toLowerCase().includes(state.searchQuery.toLowerCase()));
+            }
+
+            return `
+            <div class="bg-white border-b overflow-x-auto scrollbar-hide sticky top-16 z-40">
+                <div class="max-w-7xl mx-auto px-4 py-4 flex gap-6 min-w-max items-center">
+                    <button onclick="setCat('Todas')" class="flex flex-col items-center gap-1.5 transition-all ${state.selectedCategory === 'Todas' ? 'text-olx-purple' : 'text-gray-400 opacity-60 hover:opacity-100'}">
+                        <div class="w-12 h-12 rounded-full border-2 flex items-center justify-center ${state.selectedCategory === 'Todas' ? 'border-olx-purple bg-purple-50' : 'border-gray-100 bg-gray-50'}"><i data-lucide="layout-grid" class="w-5 h-5"></i></div>
+                        <span class="text-[9px] font-black uppercase tracking-tighter">Todas</span>
+                    </button>
+                    ${CATEGORIES.map(cat => `
+                        <button onclick="setCat('${cat}')" class="flex flex-col items-center gap-1.5 transition-all ${state.selectedCategory === cat ? 'text-olx-purple' : 'text-gray-400 opacity-60 hover:opacity-100'}">
+                            <div class="w-12 h-12 rounded-full border-2 flex items-center justify-center ${state.selectedCategory === cat ? 'border-olx-purple bg-purple-50' : 'border-gray-100 bg-gray-50'}"><i data-lucide="tag" class="w-5 h-5"></i></div>
+                            <span class="text-[9px] font-black uppercase tracking-tighter">${cat}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </div>
+
+            <div class="max-w-7xl mx-auto px-4 py-10">
+                <div class="flex justify-between items-end mb-8">
+                    <div>
+                        <h2 class="text-2xl font-black text-gray-900 tracking-tighter">
+                            ${state.searchQuery ? `Resultados para "${state.searchQuery}"` : 'Recentemente postados'}
+                        </h2>
+                        <p class="text-xs text-gray-400 font-bold uppercase tracking-widest">Exclusivo Condomínio Contemporâneo</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                    ${filtered.map(l => `
+                        <div onclick="navigateTo('detail', '${l.id}')" class="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm hover:shadow-xl transition-all cursor-pointer group relative">
+                            <div class="aspect-[4/5] bg-gray-100 relative overflow-hidden">
+                                <img src="${l.images[0]}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500">
+                                ${l.isFeatured ? `<div class="absolute top-2 left-2 bg-amber-400 text-amber-900 text-[8px] font-black px-2 py-0.5 rounded shadow-sm uppercase">Destaque</div>` : ''}
+                            </div>
+                            <div class="p-4">
+                                <h3 class="text-sm font-bold text-gray-800 line-clamp-2 h-10 mb-1 leading-tight group-hover:text-olx-purple transition-colors">${l.title}</h3>
+                                <p class="text-lg font-black text-gray-900">${formatCurrency(l.price)}</p>
+                                <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-50">
+                                    <span class="text-[9px] font-black text-gray-400 uppercase">Bloco ${l.userBlock}</span>
+                                    <span class="text-[9px] font-bold text-gray-300">${new Date(l.createdAt).toLocaleDateString()}</span>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('')}
+                    ${filtered.length === 0 ? `<div class="col-span-full py-32 text-center">
+                        <i data-lucide="search-x" class="w-16 h-16 text-gray-200 mx-auto mb-4"></i>
+                        <p class="text-gray-400 font-black uppercase tracking-widest">Nenhum anúncio encontrado.</p>
+                    </div>` : ''}
+                </div>
+            </div>
+            `;
+        }
+
+        function renderLogin() {
+            return `
+            <div class="max-w-md mx-auto py-24 px-4">
+                <div class="bg-white p-10 rounded-[40px] shadow-2xl border border-gray-50">
+                    <div class="text-center mb-8">
+                        <div class="w-16 h-16 bg-purple-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                            <i data-lucide="shield-check" class="w-8 h-8 text-olx-purple"></i>
+                        </div>
+                        <h1 class="text-3xl font-black tracking-tighter">Acessar Conta</h1>
+                        <p class="text-gray-400 text-sm font-medium">Classificados do Contemporâneo.</p>
+                    </div>
+                    <div class="space-y-4">
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">E-mail</label>
+                            <input id="login-email" type="email" placeholder="seu@email.com" class="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-olx-purple outline-none transition-all font-bold">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha</label>
+                            <input id="login-pass" type="password" placeholder="••••••••" class="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-olx-purple outline-none transition-all font-bold">
+                        </div>
+                        <button onclick="handleLogin()" class="w-full py-5 bg-olx-purple text-white rounded-2xl font-black uppercase tracking-tighter shadow-lg hover:bg-olx-purpleHover transition-all btn-shadow active:scale-95">Entrar agora</button>
+                        <div class="text-center pt-4">
+                            <p class="text-sm text-gray-500 font-medium">Ainda não é cadastrado? <button onclick="navigateTo('register')" class="text-olx-purple font-black hover:underline">Criar conta</button></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderRegister() {
+            return `
+            <div class="max-w-xl mx-auto py-20 px-4">
+                <div class="bg-white p-10 rounded-[40px] shadow-2xl border border-gray-50">
+                    <div class="text-center mb-10">
+                        <h1 class="text-3xl font-black tracking-tighter">Cadastro de Morador</h1>
+                        <p class="text-gray-400 text-sm font-medium">Sua segurança em primeiro lugar.</p>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2 space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Nome Completo</label>
+                            <input id="reg-name" placeholder="Ex: João da Silva" class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Bloco/Torre</label>
+                            <input id="reg-block" placeholder="Ex: 01" class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Apartamento</label>
+                            <input id="reg-apt" placeholder="Ex: 304" class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">WhatsApp</label>
+                            <input id="reg-wa" placeholder="219..." class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <div class="space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">E-mail</label>
+                            <input id="reg-email" placeholder="seu@email.com" class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <div class="md:col-span-2 space-y-1">
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Senha de acesso</label>
+                            <input id="reg-pass" type="password" placeholder="Mínimo 6 dígitos" class="w-full p-4 bg-gray-50 rounded-2xl outline-none border-2 border-transparent focus:border-olx-purple font-bold">
+                        </div>
+                        <button onclick="handleRegister()" class="md:col-span-2 py-5 bg-olx-purple text-white rounded-2xl font-black uppercase tracking-tighter mt-4 shadow-lg hover:bg-olx-purpleHover btn-shadow">Finalizar Cadastro</button>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderStatusPage() {
+            return `
+            <div class="max-w-xl mx-auto py-24 px-4 text-center">
+                <div class="bg-white p-12 rounded-[50px] shadow-2xl border border-gray-50">
+                    <div class="relative w-24 h-24 mx-auto mb-8">
+                        <div class="absolute inset-0 bg-olx-purple/10 rounded-full animate-ping"></div>
+                        <div class="relative bg-white w-full h-full rounded-full flex items-center justify-center border shadow-lg">
+                            <i data-lucide="clock" class="w-12 h-12 text-olx-purple"></i>
+                        </div>
+                    </div>
+                    <h1 class="text-3xl font-black mb-4 tracking-tighter">Aguardando Aprovação</h1>
+                    <p class="text-gray-400 font-medium mb-10 leading-relaxed">Seu cadastro está sendo revisado. Para liberar as publicações agora, faça o pagamento da taxa única.</p>
+                    
+                    <div class="bg-gray-50 rounded-[32px] p-8 text-left space-y-5 border border-gray-100">
+                        <div class="flex justify-between items-center border-b border-gray-200 pb-4">
+                            <span class="text-xs font-black text-gray-400 uppercase tracking-widest">Valor da Taxa</span>
+                            <span class="text-2xl font-black text-gray-900">R$ ${SUBSCRIPTION_FEE.toFixed(2)}</span>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Chave PIX (Copiar E-mail)</p>
+                            <div onclick="copyPix()" class="bg-white border-2 border-gray-100 p-4 rounded-2xl flex justify-between items-center cursor-pointer group hover:border-olx-purple transition-all">
+                                <span class="font-bold text-gray-700 truncate mr-3">${PIX_KEY}</span>
+                                <i data-lucide="copy" class="w-5 h-5 text-gray-300 group-hover:text-olx-purple"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="contactStatus()" class="w-full mt-10 py-5 bg-green-500 text-white rounded-[24px] font-black uppercase text-lg shadow-xl flex items-center justify-center gap-3 hover:bg-green-600 transition-all active:scale-95">
+                        <i data-lucide="message-circle"></i> Enviar Comprovante
+                    </button>
+                    <div class="mt-8 flex items-center justify-center gap-2">
+                        <div class="w-2 h-2 bg-olx-purple rounded-full animate-bounce"></div>
+                        <p class="text-[10px] text-gray-300 font-black uppercase tracking-widest">Verificando status em tempo real...</p>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderAnnounce() {
+            return `
+            <div class="max-w-3xl mx-auto py-16 px-4">
+                <div class="bg-white p-12 rounded-[40px] shadow-2xl border border-gray-50">
+                    <h1 class="text-3xl font-black mb-2 tracking-tighter">Anunciar Desapego</h1>
+                    <p class="text-gray-400 mb-10 font-medium">Seu anúncio ficará ativo pelo ciclo de 30 dias.</p>
+                    
+                    <div class="space-y-8">
+                        <div>
+                            <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 block ml-1">Fotos do Produto (Máx 6)</label>
+                            <div class="grid grid-cols-3 sm:grid-cols-6 gap-3 mb-4" id="img-preview"></div>
+                            <label class="block p-12 border-2 border-dashed border-gray-200 rounded-3xl text-center cursor-pointer hover:bg-gray-50 transition-colors group">
+                                <i data-lucide="camera" class="mx-auto w-10 h-10 text-gray-200 group-hover:text-olx-purple transition-colors mb-3"></i>
+                                <span class="text-xs font-black text-gray-400 uppercase tracking-widest group-hover:text-olx-purple">Adicionar Fotos</span>
+                                <input type="file" multiple accept="image/*" class="hidden" onchange="previewImages(this)">
+                            </label>
+                        </div>
+                        
+                        <div class="space-y-5">
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">O que você está vendendo?</label>
+                                <input id="ann-title" placeholder="Ex: Cadeira de escritório ergonômica" class="w-full p-5 bg-gray-50 rounded-2xl outline-none font-bold border-2 border-transparent focus:border-olx-purple transition-all">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Descrição</label>
+                                <textarea id="ann-desc" placeholder="Detalhes, estado de conservação..." class="w-full p-5 bg-gray-50 rounded-2xl outline-none h-40 font-bold border-2 border-transparent focus:border-olx-purple transition-all"></textarea>
+                            </div>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Categoria</label>
+                                    <select id="ann-cat" class="w-full p-5 bg-gray-50 rounded-2xl outline-none font-bold border-2 border-transparent focus:border-olx-purple transition-all appearance-none cursor-pointer">
+                                        ${CATEGORIES.map(c => `<option>${c}</option>`).join('')}
+                                    </select>
+                                </div>
+                                <div class="space-y-1">
+                                    <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Preço (R$)</label>
+                                    <input id="ann-price" type="number" placeholder="0,00" class="w-full p-5 bg-gray-50 rounded-2xl outline-none font-black text-2xl text-olx-purple border-2 border-transparent focus:border-olx-purple transition-all">
+                                </div>
+                            </div>
+                        </div>
+                        <button onclick="handleSaveAnnounce()" class="w-full py-6 bg-olx-orange text-white rounded-[24px] font-black text-xl uppercase shadow-xl hover:bg-olx-orange/90 transition-all active:scale-95 btn-shadow">Publicar Anúncio</button>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderMyListings() {
+            const myList = db.getListings().filter(l => l.userId === state.user.id);
+            const isExpired = state.user.subscriptionExpiresAt && new Date(state.user.subscriptionExpiresAt) < new Date();
+            const daysLeft = state.user.subscriptionExpiresAt ? Math.max(0, Math.ceil((new Date(state.user.subscriptionExpiresAt) - new Date()) / (1000 * 3600 * 24))) : 0;
+
+            return `
+            <div class="max-w-5xl mx-auto py-16 px-4">
+                ${state.user.subscriptionExpiresAt ? `
+                    <div class="mb-10 p-8 rounded-[40px] border-2 flex flex-col md:flex-row items-center justify-between gap-6 ${isExpired ? 'bg-red-50 border-red-100 text-red-700' : 'bg-amber-50 border-amber-100 text-amber-700'}">
+                        <div class="flex items-center gap-6">
+                            <div class="w-16 h-16 rounded-3xl flex items-center justify-center ${isExpired ? 'bg-red-500' : 'bg-amber-500'} text-white shadow-lg">
+                                <i data-lucide="clock" class="w-8 h-8"></i>
+                            </div>
+                            <div>
+                                <h3 class="font-black uppercase tracking-tighter text-xl">${isExpired ? 'Ciclo Expirado' : `Vence em ${daysLeft} dias`}</h3>
+                                <p class="text-sm font-medium opacity-80">${isExpired ? 'Sua renovação de 30 dias é necessária.' : 'Seu ciclo de 30 dias está ativo e saudável.'}</p>
+                            </div>
+                        </div>
+                        ${isExpired ? `
+                        <div class="flex items-center gap-3 w-full md:w-auto">
+                            <button onclick="copyPix()" class="flex-1 bg-white border border-red-200 text-red-600 px-6 py-4 rounded-2xl text-xs font-black uppercase shadow-sm">Pagar Renovação</button>
+                            <button onclick="contactStatus()" class="flex-1 bg-red-600 text-white px-6 py-4 rounded-2xl text-xs font-black uppercase shadow-lg">Enviar PIX</button>
+                        </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-12">
+                    <div>
+                        <h1 class="text-4xl font-black tracking-tighter text-gray-900">Meus Anúncios</h1>
+                        <p class="text-gray-400 font-bold uppercase tracking-widest text-[10px] mt-1">Gerencie suas ofertas no condomínio</p>
+                    </div>
+                    <button onclick="handleAnnounceClick()" class="bg-olx-orange text-white px-8 py-3 rounded-full font-black uppercase text-xs shadow-lg hover:scale-105 transition-transform active:scale-95">Criar Novo Anúncio</button>
+                </div>
+
+                <div class="grid gap-4">
+                    ${myList.map(l => `
+                        <div class="bg-white p-5 rounded-[32px] shadow-sm border border-gray-100 flex flex-col md:flex-row items-center gap-6 hover:shadow-md transition-shadow">
+                            <div class="w-24 h-24 rounded-2xl overflow-hidden bg-gray-50 flex-shrink-0">
+                                <img src="${l.images[0]}" class="w-full h-full object-cover">
+                            </div>
+                            <div class="flex-1 text-center md:text-left">
+                                <span class="text-[9px] font-black uppercase px-3 py-1 rounded-full ${l.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'} mb-2 inline-block shadow-sm tracking-widest">${l.status === 'approved' ? 'Ativo' : 'Pendente'}</span>
+                                <h3 class="font-black text-gray-800 text-lg leading-tight mb-1">${l.title}</h3>
+                                <p class="text-olx-purple font-black text-xl">${formatCurrency(l.price)}</p>
+                            </div>
+                            <div class="flex gap-3">
+                                <button onclick="navigateTo('detail', '${l.id}')" class="p-4 bg-gray-50 text-gray-400 hover:text-olx-purple transition-colors rounded-2xl border border-transparent hover:border-olx-purple/20"><i data-lucide="eye" class="w-6 h-6"></i></button>
+                                <button onclick="deleteListing('${l.id}')" class="p-4 bg-red-50 text-red-300 hover:text-red-500 transition-colors rounded-2xl border border-transparent hover:border-red-200"><i data-lucide="trash-2" class="w-6 h-6"></i></button>
+                            </div>
+                        </div>
+                    `).join('')}
+                    ${myList.length === 0 ? `<div class="p-32 text-center text-gray-300 font-black uppercase tracking-[0.2em] border-2 border-dashed rounded-[40px] bg-white">Nenhum anúncio</div>` : ''}
+                </div>
+            </div>
+            `;
+        }
+
+        function renderAdmin() {
+            const users = db.getUsers();
+            const listings = db.getListings();
+
+            return `
+            <div class="max-w-7xl mx-auto py-16 px-4 space-y-16">
+                <div class="flex items-center gap-5">
+                    <div class="bg-olx-purple p-4 rounded-3xl text-white shadow-xl"><i data-lucide="shield-check" class="w-8 h-8"></i></div>
+                    <div>
+                        <h1 class="text-4xl font-black tracking-tighter">Painel de Controle</h1>
+                        <p class="text-gray-400 font-bold uppercase tracking-widest text-xs mt-1">Gestão Administrativa do Marketplace</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                    <section class="space-y-6">
+                        <h2 class="text-2xl font-black mb-8 flex items-center gap-3 tracking-tighter"><i data-lucide="users" class="text-olx-purple"></i> Moradores Registrados</h2>
+                        <div class="bg-white rounded-[40px] shadow-sm overflow-hidden border border-gray-100">
+                            ${users.map(u => {
+                                const isExp = u.subscriptionExpiresAt && new Date(u.subscriptionExpiresAt) < new Date();
+                                return `
+                                <div class="p-6 border-b border-gray-50 last:border-0 flex justify-between items-center hover:bg-gray-50 transition-colors">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center font-black text-olx-purple shadow-inner">${u.name[0]}</div>
+                                        <div>
+                                            <p class="font-black text-sm text-gray-800">${u.name}</p>
+                                            <p class="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Bloco ${u.block} • Apt ${u.apartment}</p>
+                                            <p class="text-[9px] font-black ${isExp ? 'text-red-500' : 'text-green-500'} uppercase tracking-tighter mt-1">${u.residentStatus} ${u.subscriptionExpiresAt ? `• Expira ${new Date(u.subscriptionExpiresAt).toLocaleDateString()}` : ''}</p>
+                                        </div>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        ${u.residentStatus === 'pending' ? `<button onclick="adminApproveUser('${u.id}')" class="bg-green-500 text-white p-3 rounded-xl shadow-md hover:bg-green-600 transition-colors"><i data-lucide="check" class="w-5 h-5"></i></button>` : ''}
+                                        <button onclick="adminRenewUser('${u.id}')" class="bg-indigo-600 text-white p-3 rounded-xl shadow-md hover:bg-indigo-700 transition-colors" title="Renovar 30 dias"><i data-lucide="refresh-cw" class="w-5 h-5"></i></button>
+                                        <button onclick="adminBlockUser('${u.id}')" class="bg-red-50 text-red-500 p-3 rounded-xl hover:bg-red-100 transition-colors"><i data-lucide="ban" class="w-5 h-5"></i></button>
+                                    </div>
+                                </div>
+                            `}).join('')}
+                        </div>
+                    </section>
+
+                    <section class="space-y-6">
+                        <h2 class="text-2xl font-black mb-8 flex items-center gap-3 tracking-tighter"><i data-lucide="tag" class="text-olx-orange"></i> Moderação de Anúncios</h2>
+                        <div class="grid gap-4">
+                            ${listings.map(l => `
+                                <div class="bg-white p-5 rounded-[32px] border border-gray-100 flex items-center gap-5 shadow-sm hover:shadow-md transition-shadow">
+                                    <img src="${l.images[0]}" class="w-20 h-20 rounded-2xl object-cover bg-gray-50 border">
+                                    <div class="flex-1">
+                                        <h4 class="font-black text-sm leading-tight text-gray-800">${l.title}</h4>
+                                        <p class="text-[10px] text-gray-400 font-bold uppercase mt-1">Por ${l.userName} (${l.status})</p>
+                                        <p class="text-olx-purple font-black text-sm mt-1">${formatCurrency(l.price)}</p>
+                                    </div>
+                                    <div class="flex gap-2">
+                                        ${l.status === 'pending' ? `<button onclick="adminApproveListing('${l.id}')" class="bg-green-500 text-white p-3 rounded-xl shadow-md hover:bg-green-600"><i data-lucide="check" class="w-5 h-5"></i></button>` : ''}
+                                        <button onclick="deleteListing('${l.id}')" class="bg-red-50 text-red-500 p-3 rounded-xl hover:bg-red-100"><i data-lucide="trash-2" class="w-5 h-5"></i></button>
+                                    </div>
+                                </div>
+                            `).join('')}
+                            ${listings.length === 0 ? `<div class="p-32 text-center text-gray-300 font-black uppercase tracking-[0.2em] border-2 border-dashed rounded-[40px] bg-white">Sem anúncios</div>` : ''}
+                        </div>
+                    </section>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderDetail(id) {
+            const listings = db.getListings();
+            const l = listings.find(item => item.id === id);
+            if (!l) return `<div class="py-32 text-center font-black uppercase tracking-widest text-gray-300">Anúncio não encontrado.</div>`;
+
+            return `
+            <div class="max-w-7xl mx-auto px-4 py-16 flex flex-col lg:flex-row gap-12">
+                <div class="flex-1 space-y-8">
+                    <div class="bg-white rounded-[50px] overflow-hidden shadow-2xl border border-gray-100 p-2">
+                        <div class="aspect-video bg-gray-900 rounded-[40px] flex items-center justify-center overflow-hidden">
+                            <img src="${l.images[0]}" class="max-h-full max-w-full object-contain">
+                        </div>
+                    </div>
+                    <div class="bg-white p-12 rounded-[40px] shadow-sm border border-gray-100 space-y-8">
+                        <div>
+                            <h1 class="text-4xl font-black text-gray-900 tracking-tighter mb-2">${l.title}</h1>
+                            <div class="flex items-center gap-4">
+                                <span class="bg-purple-50 text-olx-purple px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-purple-100">${l.category}</span>
+                                <span class="text-gray-300">•</span>
+                                <p class="text-gray-400 text-xs font-bold uppercase tracking-widest">Postado em ${new Date(l.createdAt).toLocaleDateString()}</p>
+                            </div>
+                        </div>
+                        <div class="border-t border-gray-50 pt-8">
+                            <h3 class="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 mb-6">Informações do produto</h3>
+                            <p class="text-xl text-gray-700 leading-relaxed font-medium whitespace-pre-wrap">${l.description}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="lg:w-96 space-y-6">
+                    <div class="bg-white p-10 rounded-[50px] shadow-2xl border border-gray-100 text-center space-y-10 sticky top-24">
+                        <div class="space-y-2">
+                            <p class="text-5xl font-black text-gray-900 tracking-tighter">${formatCurrency(l.price)}</p>
+                            <p class="text-xs text-gray-400 font-bold uppercase tracking-widest">À vista no PIX ou dinheiro</p>
+                        </div>
+                        
+                        <a href="https://wa.me/${l.whatsappContact}?text=Olá! Vi seu anúncio no OLX Contemporâneo: ${l.title}. Ainda está disponível?" target="_blank" class="block w-full py-6 bg-green-500 text-white rounded-[24px] font-black text-xl shadow-xl hover:bg-green-600 transition-all hover:scale-105 btn-shadow active:scale-95 flex items-center justify-center gap-3">
+                            <i data-lucide="message-circle"></i> Chat no WhatsApp
+                        </a>
+
+                        <div class="bg-gray-50 p-8 rounded-[32px] flex items-center gap-5 text-left border border-gray-100">
+                            <div class="w-16 h-16 bg-white rounded-2xl flex items-center justify-center font-black text-2xl text-olx-purple shadow-md border border-purple-100">${l.userName[0]}</div>
+                            <div>
+                                <p class="font-black text-gray-900 text-lg leading-tight">${l.userName}</p>
+                                <p class="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-0.5">Bloco ${l.userBlock}</p>
+                                <div class="flex items-center gap-1 text-green-500 text-[9px] font-black uppercase tracking-tighter mt-1">
+                                    <i data-lucide="shield-check" class="w-3 h-3"></i> Morador Verificado
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function renderBlocked() {
+            return `
+            <div class="max-w-xl mx-auto py-32 text-center bg-white rounded-[50px] m-4 p-16 shadow-2xl border border-red-50">
+                <div class="w-24 h-24 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-8">
+                    <i data-lucide="ban" class="w-12 h-12 text-red-600"></i>
+                </div>
+                <h1 class="text-4xl font-black mb-4 text-red-600 tracking-tighter">Conta Bloqueada</h1>
+                <p class="text-gray-400 font-bold leading-relaxed mb-10">Seu acesso foi desativado pela administração. Entre em contato com Luiz Paulo para regularizar sua situação.</p>
+                <button onclick="logout()" class="w-full py-5 bg-gray-900 text-white rounded-[24px] font-black uppercase tracking-widest text-xs hover:bg-black transition-all active:scale-95 shadow-xl">Sair da conta</button>
+            </div>
+            `;
+        }
+
+        // --- HANDLERS ---
+
+        function handleLogin() {
+            const email = document.getElementById('login-email').value;
+            const pass = document.getElementById('login-pass').value;
+            const users = db.getUsers();
+            const user = users.find(u => u.email === email && u.password === pass);
+            if (user) {
+                db.setSession(user.id);
+                navigateTo('home');
+            } else {
+                alert('E-mail ou senha incorretos.');
+            }
+        }
+
+        function handleRegister() {
+            const name = document.getElementById('reg-name').value;
+            const block = document.getElementById('reg-block').value;
+            const apt = document.getElementById('reg-apt').value;
+            const wa = document.getElementById('reg-wa').value;
+            const email = document.getElementById('reg-email').value;
+            const pass = document.getElementById('reg-pass').value;
+
+            if (!name || !email || !pass) return alert('Por favor, preencha os campos obrigatórios.');
+            const users = db.getUsers();
+            if (users.find(u => u.email === email)) return alert('E-mail já cadastrado.');
+
+            const newUser = {
+                id: Math.random().toString(36).substr(2, 9),
+                name, block, apartment: apt, whatsapp: wa, email, password: pass,
+                role: 'resident', residentStatus: 'pending', subscriberActive: false,
+                createdAt: new Date().toISOString()
+            };
+
+            users.push(newUser);
+            db.saveUsers(users);
+            db.setSession(newUser.id);
+            navigateTo('status');
+        }
+
+        let tempImages = [];
+        function previewImages(input) {
+            const files = input.files;
+            tempImages = [];
+            const container = document.getElementById('img-preview');
+            container.innerHTML = '';
+            for (let f of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    tempImages.push(e.target.result);
+                    container.innerHTML += `<img src="${e.target.result}" class="w-full aspect-square object-cover rounded-2xl border shadow-sm">`;
+                };
+                reader.readAsDataURL(f);
+            }
+        }
+
+        function handleSaveAnnounce() {
+            if (tempImages.length === 0) return alert('Adicione pelo menos uma foto.');
+            const title = document.getElementById('ann-title').value;
+            const desc = document.getElementById('ann-desc').value;
+            const cat = document.getElementById('ann-cat').value;
+            const price = parseFloat(document.getElementById('ann-price').value);
+
+            if (!title || !desc || isNaN(price)) return alert('Preencha todos os campos corretamente.');
+
+            const newListing = {
+                id: Math.random().toString(36).substr(2, 9),
+                title, description: desc, price, category: cat,
+                images: tempImages,
+                userId: state.user.id, userName: state.user.name, userBlock: state.user.block,
+                whatsappContact: state.user.whatsapp,
+                status: 'pending',
+                createdAt: new Date().toISOString()
+            };
+
+            const listings = db.getListings();
+            listings.push(newListing);
+            db.saveListings(listings);
+
+            // LOGICA 30 DIAS: Se for o primeiro, inicia contador
+            if (!state.user.subscriptionExpiresAt) {
+                const users = db.getUsers();
+                const expiry = new Date();
+                expiry.setDate(expiry.getDate() + 30);
+                const updated = users.map(u => u.id === state.user.id ? {...u, subscriptionExpiresAt: expiry.toISOString()} : u);
+                db.saveUsers(updated);
+            }
+
+            alert('Anúncio enviado para moderação! Como este é seu ciclo de 30 dias, ele já começou a contar.');
+            navigateTo('myListings');
+        }
+
+        function handleAnnounceClick() {
+            if (!state.user) return navigateTo('login');
+            if (state.user.residentStatus !== 'approved') return navigateTo('status');
+            const isExpired = state.user.subscriptionExpiresAt && new Date(state.user.subscriptionExpiresAt) < new Date();
+            if (isExpired) return alert('Seu tempo de acesso expirou. Renove seu ciclo de 30 dias no seu painel para voltar a anunciar.');
+            navigateTo('announce');
+        }
+
+        function handleSearch(val) {
+            state.searchQuery = val;
+            if (state.currentView !== 'home') {
+                navigateTo('home');
+            } else {
+                render();
+            }
+        }
+
+        function setCat(cat) {
+            state.selectedCategory = cat;
+            render();
+        }
+
+        function logout() {
+            db.setSession(null);
+            navigateTo('home');
+        }
+
+        function copyPix() {
+            navigator.clipboard.writeText(PIX_KEY);
+            alert('Chave PIX copiada para o clipboard!');
+        }
+
+        function contactStatus() {
+            const msg = `Olá Luiz Paulo! Acabei de fazer o PIX de R$ ${SUBSCRIPTION_FEE.toFixed(2)}. Pode liberar meu acesso? Sou o ${state.user.name} do Bloco ${state.user.block}`;
+            window.open(`https://wa.me/${ADMIN_WHATSAPP}?text=${encodeURIComponent(msg)}`, '_blank');
+        }
+
+        function deleteListing(id) {
+            if (!confirm('Excluir este anúncio permanentemente?')) return;
+            const listings = db.getListings();
+            const updated = listings.filter(l => l.id !== id);
+            db.saveListings(updated);
+            render();
+        }
+
+        // --- FUNÇÕES ADMIN ---
+        function adminApproveUser(id) {
+            const users = db.getUsers();
+            const updated = users.map(u => u.id === id ? {...u, residentStatus: 'approved', subscriberActive: true} : u);
+            db.saveUsers(updated);
+            render();
+        }
+        function adminRenewUser(id) {
+            const users = db.getUsers();
+            const expiry = new Date();
+            expiry.setDate(expiry.getDate() + 30);
+            const updated = users.map(u => u.id === id ? {...u, subscriptionExpiresAt: expiry.toISOString(), residentStatus: 'approved'} : u);
+            db.saveUsers(updated);
+            alert('Acesso renovado por +30 dias.');
+            render();
+        }
+        function adminBlockUser(id) {
+            if (!confirm('Bloquear este morador?')) return;
+            const users = db.getUsers();
+            const updated = users.map(u => u.id === id ? {...u, residentStatus: 'blocked'} : u);
+            db.saveUsers(updated);
+            render();
+        }
+        function adminApproveListing(id) {
+            const listings = db.getListings();
+            const updated = listings.map(l => l.id === id ? {...l, status: 'approved'} : l);
+            db.saveListings(updated);
+            render();
+        }
+
+        // --- INICIALIZAÇÃO ---
+        db.init();
+        render();
+
+        // Polling para simular aprovação em tempo real
+        setInterval(() => {
+            if (state.user && state.user.residentStatus === 'pending') {
+                const users = db.getUsers();
+                const updatedUser = users.find(u => u.id === state.user.id);
+                if (updatedUser && updatedUser.residentStatus === 'approved') {
+                    state.user = updatedUser;
+                    navigateTo('home');
+                }
+            }
+        }, 5000);
+
+    </script>
+</body>
+</html>
